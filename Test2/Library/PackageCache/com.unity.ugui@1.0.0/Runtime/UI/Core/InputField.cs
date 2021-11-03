@@ -1246,30 +1246,9 @@ namespace UnityEngine.UI
             }
         }
 
-        // Returns true if the TouchScreenKeyboard should be used. On Android and Chrome OS, we only want to use the
-        // TouchScreenKeyboard if in-place editing is not allowed (i.e. when we do not have a hardware keyboard available).
-        private bool TouchScreenKeyboardShouldBeUsed()
-        {
-            RuntimePlatform platform = Application.platform;
-            switch (platform)
-            {
-                case RuntimePlatform.Android:
-                    return !TouchScreenKeyboard.isInPlaceEditingAllowed;
-                default:
-                    return TouchScreenKeyboard.isSupported;
-            }
-        }
-
         private bool InPlaceEditing()
         {
             return !TouchScreenKeyboard.isSupported || m_TouchKeyboardAllowsInPlaceEditing;
-        }
-
-        // In-place editing can change state if a hardware keyboard becomes available or is hidden while the input field is activated.
-        // This currently only happens on Chrome OS devices (that support laptop and tablet mode).
-        private bool InPlaceEditingChanged()
-        {
-            return m_TouchKeyboardAllowsInPlaceEditing != TouchScreenKeyboard.isInPlaceEditingAllowed;
         }
 
         void UpdateCaretFromKeyboard()
@@ -1322,21 +1301,6 @@ namespace UnityEngine.UI
             }
 
             AssignPositioningIfNeeded();
-
-            // If the device's state changed in a way that affects whether we should use a touchscreen keyboard or not,
-            // then we make sure to clear all of the caret/highlight state visually and deactivate the input field.
-            if (isFocused && InPlaceEditingChanged())
-            {
-                if (m_CachedInputRenderer != null)
-                {
-                    using (var helper = new VertexHelper())
-                        helper.FillMesh(mesh);
-
-                    m_CachedInputRenderer.SetMesh(mesh);
-                }
-
-                DeactivateInputField();
-            }
 
             if (!isFocused || InPlaceEditing())
                 return;
@@ -1681,7 +1645,6 @@ namespace UnityEngine.UI
             bool shift = (currentEventModifiers & EventModifiers.Shift) != 0;
             bool alt = (currentEventModifiers & EventModifiers.Alt) != 0;
             bool ctrlOnly = ctrl && !alt && !shift;
-            bool shiftOnly = shift && !ctrl && !alt;
 
             switch (evt.keyCode)
             {
@@ -1759,26 +1722,6 @@ namespace UnityEngine.UI
                         Delete();
                         UpdateTouchKeyboardFromEditChanges();
                         SendOnValueChangedAndUpdateLabel();
-                        return EditState.Continue;
-                    }
-                    break;
-                }
-                case KeyCode.Insert:
-                {
-                    // Copy via Insert key
-                    if (ctrlOnly)
-                    {
-                        if (inputType != InputType.Password)
-                            clipboard = GetSelectedString();
-                        else
-                            clipboard = "";
-                        return EditState.Continue;
-                    }
-                    // Paste via insert key.
-                    else if (shiftOnly)
-                    {
-                        Append(clipboard);
-                        UpdateLabel();
                         return EditState.Continue;
                     }
                     break;
@@ -2285,25 +2228,10 @@ namespace UnityEngine.UI
 
             // If we have an input validator, validate the input first
             int insertionPoint = Math.Min(selectionFocusPosition, selectionAnchorPosition);
-
-            //Get the text based on selection for validation instead of whole text(case 1253193).
-            var validateText = text;
-            if (selectionFocusPosition != selectionAnchorPosition)
-            {
-                if (caretPositionInternal < caretSelectPositionInternal)
-                {
-                    validateText = text.Substring(0, caretPositionInternal) + text.Substring(caretSelectPositionInternal, text.Length - caretSelectPositionInternal);
-                }
-                else
-                {
-                    validateText = text.Substring(0, caretSelectPositionInternal) + text.Substring(caretPositionInternal, text.Length - caretPositionInternal);
-                }
-            }
-
             if (onValidateInput != null)
-                input = onValidateInput(validateText, insertionPoint, input);
+                input = onValidateInput(text, insertionPoint, input);
             else if (characterValidation != CharacterValidation.None)
-                input = Validate(validateText, insertionPoint, input);
+                input = Validate(text, insertionPoint, input);
 
             // If the input is invalid, skip it
             if (input == 0)
@@ -2580,7 +2508,7 @@ namespace UnityEngine.UI
                 return;
 #endif
             // No need to draw a cursor on mobile as its handled by the devices keyboard.
-            if (!InPlaceEditing() && !shouldHideMobileInput)
+            if (!shouldHideMobileInput)
                 return;
 
             if (m_CachedInputRenderer == null && m_TextComponent != null)
@@ -2969,12 +2897,7 @@ namespace UnityEngine.UI
             if (EventSystem.current.currentSelectedGameObject != gameObject)
                 EventSystem.current.SetSelectedGameObject(gameObject);
 
-            // Cache the value of isInPlaceEditingAllowed, because on UWP this involves calling into native code
-            // Usually, the value only needs to be updated once when the TouchKeyboard is opened; however, on Chrome OS,
-            // we check repeatedly to see if the in-place editing state has changed, so we can take action.
-            m_TouchKeyboardAllowsInPlaceEditing = TouchScreenKeyboard.isInPlaceEditingAllowed;
-
-            if (TouchScreenKeyboardShouldBeUsed())
+            if (TouchScreenKeyboard.isSupported)
             {
                 if (input != null && input.touchSupported)
                 {
@@ -2983,6 +2906,10 @@ namespace UnityEngine.UI
                 m_Keyboard = (inputType == InputType.Password) ?
                     TouchScreenKeyboard.Open(m_Text, keyboardType, false, multiLine, true, false, "", characterLimit) :
                     TouchScreenKeyboard.Open(m_Text, keyboardType, inputType == InputType.AutoCorrect, multiLine, false, false, "", characterLimit);
+
+                // Cache the value of isInPlaceEditingAllowed, because on UWP this involves calling into native code
+                // The value only needs to be updated once when the TouchKeyboard is opened.
+                m_TouchKeyboardAllowsInPlaceEditing = TouchScreenKeyboard.isInPlaceEditingAllowed;
 
                 // If TouchKeyboard doesn't support InPlaceEditing don't call OnFocus as mobile doesn't properly support select all
                 // Just set it to the end of the text (where it would move when typing starts)
